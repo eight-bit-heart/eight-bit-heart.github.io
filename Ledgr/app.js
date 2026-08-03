@@ -204,7 +204,26 @@ function derive(env) {
   };
 }
 
+/** Start date of the fixed expense's current billing period (its most recent
+ *  scheduled occurrence on or before today), or null if its first occurrence
+ *  hasn't landed yet. */
+function currentPeriodStart(sch) {
+  const dates = occurrences(sch, todayISO());
+  return dates.length ? toISO(dates[dates.length - 1]) : null;
+}
+
+/** Whether a fixed-expense envelope has an expense logged in its current period. */
+function isPaidThisPeriod(env) {
+  const periodStart = currentPeriodStart(env.schedule);
+  if (!periodStart) return false;
+  const asOf = todayISO();
+  return state.txns.some((t) =>
+    t.envelopeId === env.id && t.kind === "expense" && t.date >= periodStart && t.date <= asOf);
+}
+
 // ═══ Rendering ═════════════════════════════════════════════════
+
+const SECTION_TITLES = { allowance: "Allowances", sinking: "Sinking Funds", fixed: "Fixed Expenses" };
 
 function render() {
   const kind = state.tab;
@@ -212,9 +231,32 @@ function render() {
     .filter((e) => e.kind === kind)
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
-  $("section-title").textContent = kind === "allowance" ? "Allowances" : "Sinking Funds";
+  $("section-title").textContent = SECTION_TITLES[kind] || "";
+  renderOverview();
   renderStrip(kind, list);
   renderGrid(list, kind);
+}
+
+/** Spent vs. planned this month, across every envelope on every tab. */
+function renderOverview() {
+  const asOf = todayISO();
+  const monthStart = asOf.slice(0, 8) + "01";
+
+  const planned = state.envelopes.reduce((s, e) => s + monthlyRate(e.schedule), 0);
+  const spent = state.txns
+    .filter((t) => t.kind === "expense" && t.date >= monthStart && t.date <= asOf)
+    .reduce((s, t) => s + t.amount, 0);
+  const pct = planned > 0 ? Math.max(0, Math.min(1, spent / planned)) : 0;
+
+  $("overview").innerHTML = `
+    <div class="overview__label">Spent this month</div>
+    <div class="overview__figure">
+      <span class="overview__spent mono">${esc(money(spent))}</span>
+      <span class="overview__of">of</span>
+      <span class="overview__planned mono">${esc(money(planned))}</span>
+      <span class="overview__of">planned</span>
+    </div>
+    <div class="overview__bar"><div class="overview__bar-fill" style="width:${(pct * 100).toFixed(1)}%"></div></div>`;
 }
 
 function renderStrip(kind, list) {
@@ -274,7 +316,7 @@ function renderStrip(kind, list) {
         { savingsActual: val, updatedAt: serverTimestamp() }, { merge: true });
       toast("Savings balance saved 💾");
     });
-  } else {
+  } else if (kind === "allowance") {
     const asOf = todayISO();
     const monthStart = asOf.slice(0, 8) + "01";
     const ids = new Set(list.map((e) => e.id));
@@ -299,8 +341,45 @@ function renderStrip(kind, list) {
         <div class="strip__stat-label">Envelopes</div>
         <div class="strip__stat-value">${list.length}</div>
       </div>`;
+  } else {
+    const asOf = todayISO();
+    const monthStart = asOf.slice(0, 8) + "01";
+    const ids = new Set(list.map((e) => e.id));
+    const paid = state.txns
+      .filter((t) => ids.has(t.envelopeId) && t.kind === "expense" && t.date >= monthStart && t.date <= asOf)
+      .reduce((s, t) => s + t.amount, 0);
+    const paidCount = list.filter(isPaidThisPeriod).length;
+
+    $("strip").innerHTML = `
+      <div class="strip__lede">
+        <div class="strip__eyebrow">📌 Committed / month</div>
+        <div class="strip__total">${esc(money(rate))}</div>
+      </div>
+      <div class="strip__stat">
+        <div class="strip__stat-label">Paid this month</div>
+        <div class="strip__stat-value">${esc(money(paid))}</div>
+      </div>
+      <div class="strip__stat">
+        <div class="strip__stat-label">Bills paid</div>
+        <div class="strip__stat-value">${paidCount} / ${list.length}</div>
+      </div>`;
   }
 }
+
+const EMPTY_STATES = {
+  allowance: `<span class="empty__emoji">💸</span>
+    <div class="empty__title">No allowances yet</div>
+    <div>Allowances refill on a schedule — groceries, coffee, hobby money.
+    Make one and it starts filling on its own.</div>`,
+  sinking: `<span class="empty__emoji">🏦</span>
+    <div class="empty__title">No sinking funds yet</div>
+    <div>Sinking funds save toward something specific — a new car, a trip,
+    the next vet bill. Together they account for your savings balance.</div>`,
+  fixed: `<span class="empty__emoji">📌</span>
+    <div class="empty__title">No fixed expenses yet</div>
+    <div>Rent, insurance, subscriptions — bills that cost the same every
+    week, two weeks, or month. Add one, then mark it paid with a click.</div>`
+};
 
 function renderGrid(list, kind) {
   const grid = $("grid"), empty = $("empty");
@@ -308,19 +387,53 @@ function renderGrid(list, kind) {
   if (!list.length) {
     grid.innerHTML = "";
     empty.hidden = false;
-    empty.innerHTML = kind === "allowance"
-      ? `<span class="empty__emoji">💸</span>
-         <div class="empty__title">No allowances yet</div>
-         <div>Allowances refill on a schedule — groceries, coffee, hobby money.
-         Make one and it starts filling on its own.</div>`
-      : `<span class="empty__emoji">🏦</span>
-         <div class="empty__title">No sinking funds yet</div>
-         <div>Sinking funds save toward something specific — a new car, a trip,
-         the next vet bill. Together they account for your savings balance.</div>`;
+    empty.innerHTML = EMPTY_STATES[kind] || "";
     return;
   }
 
   empty.hidden = true;
+
+  if (kind === "fixed") {
+    grid.innerHTML = list.map((env) => {
+      const sch = env.schedule || {};
+      const next = nextOccurrence(sch);
+      const started = !!currentPeriodStart(sch);
+      const paid = started && isPaidThisPeriod(env);
+
+      const cls = ["env", "env--fixed"];
+      if (paid) cls.push("env--paid");
+
+      const scheduleLine = started
+        ? `${esc(INTERVALS[sch.interval]?.label || "")}${next ? ` · next ${esc(shortDate(toISO(next)))}` : " · finished 🏁"}`
+        : `${esc(INTERVALS[sch.interval]?.label || "")} · starts ${esc(shortDate(sch.startDate))}`;
+
+      const statusLabel = !started ? "⏳ Not started yet" : (paid ? "✅ Paid this period" : "⏳ Not paid yet");
+
+      const actionBtn = !started
+        ? `<button class="btn" disabled title="This bill's schedule hasn't started yet">Mark paid</button>`
+        : paid
+          ? `<button class="btn" data-act="history" data-id="${env.id}">✅ Paid</button>`
+          : `<button class="btn btn--primary" data-act="pay" data-id="${env.id}">Mark paid</button>`;
+
+      return `
+        <article class="${cls.join(" ")}">
+          <div class="env__head">
+            <span class="env__emoji">${esc(env.emoji || "📌")}</span>
+            <h3 class="env__name" title="${esc(env.name)}">${esc(env.name)}</h3>
+          </div>
+          <div class="env__balance">${esc(money(sch.amount || 0))}</div>
+          <div class="env__target">${scheduleLine}</div>
+          <div class="env__sched ${paid ? "" : "env__sched--off"}">${statusLabel}</div>
+          <div class="env__acts">
+            ${actionBtn}
+            <button class="btn" data-act="history" data-id="${env.id}" title="History">📜</button>
+            <button class="btn" data-act="edit" data-id="${env.id}" title="Edit">✏️</button>
+          </div>
+        </article>`;
+    }).join("");
+    return;
+  }
+
   grid.innerHTML = list.map((env) => {
     const d = derive(env);
     const next = nextOccurrence(env.schedule);
@@ -380,8 +493,25 @@ $("grid").addEventListener("click", (e) => {
   const act = btn.dataset.act;
   if (act === "edit") openEnvelopeModal(env);
   else if (act === "history") openHistoryModal(env);
+  else if (act === "pay") markPaid(env);
   else openTxnModal(env, act);
 });
+
+/** Fixed-expense "Mark paid" button: logs the scheduled amount as an
+ *  expense today, no modal needed since there's nothing to choose. */
+async function markPaid(env) {
+  const amount = env.schedule?.amount || 0;
+  if (!(amount > 0)) { toast("Set a fixed amount for this expense first ✏️"); return; }
+  await addDoc(collection(db, "users", state.uid, "txns"), {
+    envelopeId: env.id,
+    kind: "expense",
+    amount,
+    date: todayISO(),
+    note: "Marked paid",
+    createdAt: serverTimestamp()
+  });
+  toast(`Marked ${money(amount)} paid ✅`);
+}
 
 // ═══ Modals ════════════════════════════════════════════════════
 
@@ -463,6 +593,7 @@ function openEnvelopeModal(env) {
         <select class="input" data-kind>
           <option value="allowance" ${e.kind === "allowance" ? "selected" : ""}>💸 Allowance</option>
           <option value="sinking" ${e.kind === "sinking" ? "selected" : ""}>🏦 Sinking fund</option>
+          <option value="fixed" ${e.kind === "fixed" ? "selected" : ""}>📌 Fixed expense</option>
         </select>
       </label>
     </div>
@@ -481,13 +612,13 @@ function openEnvelopeModal(env) {
       </label>
     </div>
 
-    <label class="check">
-      <input type="checkbox" data-sched-on ${s.enabled ? "checked" : ""}>
+    <label class="check" data-sched-on-field ${e.kind === "fixed" ? "hidden" : ""}>
+      <input type="checkbox" data-sched-on ${s.enabled || e.kind === "fixed" ? "checked" : ""}>
       <span>Fund this envelope on a schedule 🔁</span>
     </label>
 
-    <div data-sched-fields ${s.enabled ? "" : "hidden"}>
-      <label class="field" data-mode-field ${e.kind === "sinking" ? "hidden" : ""}>
+    <div data-sched-fields ${s.enabled || e.kind === "fixed" ? "" : "hidden"}>
+      <label class="field" data-mode-field ${e.kind === "sinking" || e.kind === "fixed" ? "hidden" : ""}>
         <span class="field__label">How it funds</span>
         <select class="input" data-mode>
           <option value="add"    ${s.mode !== "refill" ? "selected" : ""}>➕ Add this much each period — surplus rolls over</option>
@@ -536,19 +667,20 @@ function openEnvelopeModal(env) {
       const target = num(r, "[data-target]");
       if (Number.isNaN(opening) || Number.isNaN(target)) return fail("Balances need to be numbers.");
 
-      const on = r.querySelector("[data-sched-on]").checked;
+      const kind = r.querySelector("[data-kind]").value;
+      const on = kind === "fixed" || r.querySelector("[data-sched-on]").checked;
       const amount = num(r, "[data-amount]");
       const startDate = r.querySelector("[data-start]").value;
       const endDate = r.querySelector("[data-end]").value;
 
       if (on) {
-        if (Number.isNaN(amount) || amount <= 0) return fail("A scheduled amount has to be more than zero.");
+        if (Number.isNaN(amount) || amount <= 0) return fail(kind === "fixed"
+          ? "The fixed amount has to be more than zero." : "A scheduled amount has to be more than zero.");
         if (!startDate) return fail("Pick a start date for the schedule.");
         if (endDate && endDate < startDate) return fail("The end date lands before the start date.");
       }
 
-      const kind = r.querySelector("[data-kind]").value;
-      const mode = kind === "sinking" ? "add" : r.querySelector("[data-mode]").value;
+      const mode = kind === "sinking" || kind === "fixed" ? "add" : r.querySelector("[data-mode]").value;
 
       const payload = {
         name,
@@ -584,15 +716,23 @@ function openEnvelopeModal(env) {
   const modeEl = root.querySelector("[data-mode]");
 
   function syncModeUI() {
-    const sinking = kindEl.value === "sinking";
-    const refill = !sinking && modeEl.value === "refill";
+    const fixed = kindEl.value === "fixed";
+    const forceAdd = kindEl.value === "sinking" || fixed;
+    const refill = !forceAdd && modeEl.value === "refill";
 
-    root.querySelector("[data-mode-field]").hidden = sinking;
-    root.querySelector("[data-target-field]").hidden = refill;
-    root.querySelector("[data-amount-label]").textContent = refill ? "Refill to" : "Amount";
-    root.querySelector("[data-sched-note]").textContent = refill
-      ? "On each refill date the balance resets to this amount. Anything left unspent is dropped rather than carried forward, and the refill amount doubles as the target."
-      : "Contributions accrue from the start date forward, including that first day. Unspent money carries over indefinitely.";
+    root.querySelector("[data-sched-on-field]").hidden = fixed;
+    if (fixed) {
+      root.querySelector("[data-sched-on]").checked = true;
+      root.querySelector("[data-sched-fields]").hidden = false;
+    }
+    root.querySelector("[data-mode-field]").hidden = forceAdd;
+    root.querySelector("[data-target-field]").hidden = refill || fixed;
+    root.querySelector("[data-amount-label]").textContent = refill ? "Refill to" : (fixed ? "Amount due" : "Amount");
+    root.querySelector("[data-sched-note]").textContent = fixed
+      ? "Ledgr expects the same amount every period. When it's due, click Mark paid on the card to log it — no need to open this form."
+      : refill
+        ? "On each refill date the balance resets to this amount. Anything left unspent is dropped rather than carried forward, and the refill amount doubles as the target."
+        : "Contributions accrue from the start date forward, including that first day. Unspent money carries over indefinitely.";
   }
 
   kindEl.addEventListener("change", syncModeUI);
@@ -678,6 +818,8 @@ function openHistoryModal(env) {
   const sch = env.schedule || {};
   const intervalLabel = INTERVALS[sch.interval]?.label || "";
 
+  const isFixed = env.kind === "fixed";
+
   const auto = d.dates.map((dt) => {
     const iso = toISO(dt);
     return d.mode === "refill"
@@ -687,7 +829,7 @@ function openHistoryModal(env) {
             + (iso === d.lastRefill ? " · current period" : ""),
           auto: true
         }
-      : { date: iso, kind: "deposit", amount: sch.amount, note: `Scheduled · ${intervalLabel}`, auto: true };
+      : { date: iso, kind: "deposit", amount: sch.amount, note: `${isFixed ? "Due" : "Scheduled"} · ${intervalLabel}`, auto: true };
   });
   const manual = state.txns.filter((t) => t.envelopeId === env.id);
 
@@ -695,14 +837,18 @@ function openHistoryModal(env) {
     .sort((a, b) => (b.date === a.date ? (a.auto ? 1 : -1) : b.date.localeCompare(a.date)))
     .slice(0, 80);
 
-  const summary = d.mode === "refill"
-    ? `Balance <strong class="mono">${esc(money(d.balance))}</strong> ·
-       ${d.count} refill${d.count === 1 ? "" : "s"} ·
-       ${d.lastRefill
-          ? `${esc(money(d.periodExpenses))} spent since ${esc(prettyDate(d.lastRefill))}`
-          : "no refill has landed yet"}`
-    : `Balance <strong class="mono">${esc(money(d.balance))}</strong> ·
-       ${d.count} scheduled · ${esc(money(d.deposits))} added · ${esc(money(d.expenses))} spent`;
+  const summary = isFixed
+    ? (d.balance > 0.005
+        ? `Owed <strong class="mono">${esc(money(d.balance))}</strong> · ${d.count} due · ${esc(money(d.expenses))} paid`
+        : `<strong class="mono">Paid up ✅</strong> · ${d.count} due · ${esc(money(d.expenses))} paid`)
+    : d.mode === "refill"
+      ? `Balance <strong class="mono">${esc(money(d.balance))}</strong> ·
+         ${d.count} refill${d.count === 1 ? "" : "s"} ·
+         ${d.lastRefill
+            ? `${esc(money(d.periodExpenses))} spent since ${esc(prettyDate(d.lastRefill))}`
+            : "no refill has landed yet"}`
+      : `Balance <strong class="mono">${esc(money(d.balance))}</strong> ·
+         ${d.count} scheduled · ${esc(money(d.deposits))} added · ${esc(money(d.expenses))} spent`;
 
   const body = `
     <p class="muted" style="margin-top:-6px">${summary}</p>

@@ -35,7 +35,7 @@ service cloud.firestore {
     function validEnvelope() {
       let d = request.resource.data;
       return d.name is string && d.name.size() > 0 && d.name.size() <= 60
-          && d.kind in ['allowance', 'sinking']
+          && d.kind in ['allowance', 'sinking', 'fixed']
           && d.opening is number
           && d.target is number
           && d.schedule.enabled is bool
