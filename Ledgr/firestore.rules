@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// Ledgr — every document lives under users/{uid}, and only that uid
+// can touch it. Paste this into Firebase console → Firestore Database
+// → Rules, then Publish.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      match /envelopes/{envelopeId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validEnvelope();
+      }
+
+      match /txns/{txnId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validTxn();
+      }
+
+      match /meta/{docId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Shape checks. These aren't security-critical — the uid match above
+    // is what protects the data — but they stop a typo in the client from
+    // writing something the reader can't interpret.
+    function validEnvelope() {
+      let d = request.resource.data;
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && d.kind in ['allowance', 'sinking']
+          && d.opening is number
+          && d.target is number
+          && d.schedule.enabled is bool
+          && d.schedule.amount is number && d.schedule.amount >= 0
+          && d.schedule.interval in ['week', 'biweek', 'month'];
+    }
+
+    function validTxn() {
+      let d = request.resource.data;
+      return d.kind in ['deposit', 'expense']
+          && d.amount is number && d.amount > 0
+          && d.date is string && d.date.size() == 10
+          && d.envelopeId is string
+          && d.note is string && d.note.size() <= 200;
+    }
+  }
+}

@@ -1,0 +1,43 @@
+# ── Never commit these ───────────────────────────────────────
+# Firebase Admin SDK service account keys. These ARE secret — they
+# bypass security rules entirely and grant full project access.
+# Downloaded from Project settings → Service accounts.
+*-firebase-adminsdk-*.json
+serviceAccountKey.json
+service-account*.json
+*.pem
+*.p12
+
+# Firebase CLI local state and logs (can leak project IDs and tokens)
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+.firebaserc
+ui-debug.log
+database-debug.log
+firestore-debug.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# ── config.js is a judgement call, not a secret ──────────────
+# Firebase *web* config (apiKey, projectId, appId) is a public
+# identifier, not a credential. Committing it is officially supported
+# and is what you want if you're hosting one shared instance others
+# sign into.
+#
+# Uncomment the line below only if you'd rather ship the code and have
+# each person connect their own Firebase project via the setup screen.
+# config.js
+
+# ── Housekeeping ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+node_modules/
+.vscode/
+.idea/
+*.swp
+*~

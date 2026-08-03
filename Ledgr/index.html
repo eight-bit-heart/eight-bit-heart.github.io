@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ledgr — envelope budgeting</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🧾</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:ital,wght@0,400..700;1,400..700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ── Boot / loading ─────────────────────────────────────── -->
+<div id="boot" class="curtain">
+  <div class="curtain__inner">
+    <div class="mark">🧾 Ledgr</div>
+    <p class="muted">Opening the envelopes…</p>
+  </div>
+</div>
+
+<!-- ── First-run Firebase setup ───────────────────────────── -->
+<section id="setup" class="curtain" hidden>
+  <div class="curtain__inner card-panel">
+    <div class="mark">🧾 Ledgr</div>
+    <h1 class="panel-title">Connect your Firebase project</h1>
+    <p class="muted">
+      Paste the <code>firebaseConfig</code> object from your Firebase console
+      (Project settings → Your apps → Web app). It's stored in this browser only.
+      To bake it in permanently instead, edit <code>config.js</code>.
+    </p>
+    <textarea id="setup-json" class="input mono" rows="10" spellcheck="false"
+      placeholder='{
+  "apiKey": "…",
+  "authDomain": "your-app.firebaseapp.com",
+  "projectId": "your-app",
+  "appId": "1:…:web:…"
+}'></textarea>
+    <p id="setup-error" class="error" hidden></p>
+    <button id="setup-save" class="btn btn--primary btn--wide">Save and connect 🔌</button>
+  </div>
+</section>
+
+<!-- ── Sign in ────────────────────────────────────────────── -->
+<section id="auth" class="curtain" hidden>
+  <div class="curtain__inner card-panel">
+    <div class="mark">🧾 Ledgr</div>
+    <p class="tagline">Cash in envelopes, minus the paper cuts.</p>
+
+    <label class="field">
+      <span class="field__label">Email</span>
+      <input id="auth-email" class="input" type="email" autocomplete="email" placeholder="you@example.com">
+    </label>
+    <label class="field">
+      <span class="field__label">Password</span>
+      <input id="auth-pass" class="input" type="password" autocomplete="current-password" placeholder="At least 6 characters">
+    </label>
+
+    <p id="auth-error" class="error" hidden></p>
+
+    <div class="auth-actions">
+      <button id="auth-signin" class="btn btn--primary">Sign in 👋</button>
+      <button id="auth-signup" class="btn">Create account ✨</button>
+    </div>
+    <button id="auth-google" class="btn btn--ghost btn--wide">Continue with Google 🔷</button>
+    <button id="auth-reset" class="linkish">Forgot your password?</button>
+  </div>
+</section>
+
+<!-- ── App ────────────────────────────────────────────────── -->
+<main id="app" hidden>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="mark mark--sm">🧾 Ledgr</div>
+
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button class="tab is-active" role="tab" data-kind="allowance" aria-selected="true">💸 Allowances</button>
+        <button class="tab" role="tab" data-kind="sinking" aria-selected="false">🏦 Sinking Funds</button>
+      </nav>
+
+      <div class="topbar__right">
+        <span id="who" class="who mono"></span>
+        <button id="signout" class="btn btn--tiny">Sign out 🚪</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section id="strip" class="strip"></section>
+
+    <div class="section-head">
+      <h2 id="section-title" class="section-title">Allowances</h2>
+      <button id="add-env" class="btn btn--primary">New envelope ➕</button>
+    </div>
+
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty" hidden></div>
+  </div>
+
+  <footer class="foot mono">
+    Balances are computed live from your schedules plus every manual entry. Nothing is posted for you.
+  </footer>
+</main>
+
+<div id="modal-root"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
